@@ -121,6 +121,13 @@ def cmd_login(args: argparse.Namespace) -> int:
 
 
 def cmd_sources(args: argparse.Namespace) -> int:
+    from .sources import curate_sources
+
+    ytdlp_path = _which("yt-dlp")
+    if ytdlp_path is None:
+        print("yt-dlp not found. Install with: brew install yt-dlp", file=sys.stderr)
+        return 4
+
     outputs_dir = Path(args.outputs_dir).resolve()
     outputs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -132,8 +139,21 @@ def cmd_sources(args: argparse.Namespace) -> int:
     manifest_path = run_dir / "run_manifest.json"
     log_path = run_dir / "run.log"
 
-    _write_text(log_path, "Phase 2 stub: sources command executed.\n")
-    _write_text(raw_path, "")  # placeholder; Phase 3 writes real yt-dlp metadata
+    _write_text(log_path, f"nlm-orch sources started. run_id={run_id}\n")
+
+    result = curate_sources(
+        ytdlp_path=ytdlp_path,
+        query=args.query,
+        max_results=args.max_results,
+        recency=args.recency,
+        max_duration=args.max_duration,
+        min_views=args.min_views,
+        channel_allow=args.channel_allow,
+        channel_block=args.channel_block,
+        raw_path=raw_path,
+        sources_path=sources_path,
+        log_path=log_path,
+    )
 
     filters = {
         "max_results": args.max_results,
@@ -143,24 +163,21 @@ def cmd_sources(args: argparse.Namespace) -> int:
         "channel_allow": args.channel_allow,
         "channel_block": args.channel_block,
     }
-    sources_doc = {
-        "query": args.query,
-        "filters": filters,
-        "note": "Phase 2 stub. Phase 3 will populate real curated sources via yt-dlp.",
-        "sources": [],
-    }
-    sources_path.write_text(json.dumps(sources_doc, indent=2), encoding="utf-8")
-
-    now = datetime.now().isoformat(timespec="seconds")
     manifest = {
         "run_id": run_id,
         "command": "sources",
         "query": args.query,
         "config_path": args.config,
         "filters": filters,
-        "started_at": now,
-        "finished_at": now,
-        "status": "stub",
+        "yt_dlp_version": result["yt_dlp_version"],
+        "yt_dlp_command": result["yt_dlp_command"],
+        "candidate_count": result["candidate_count"],
+        "included_count": result["included_count"],
+        "excluded_count": result["excluded_count"],
+        "started_at": result["started_at"],
+        "finished_at": datetime.now().isoformat(timespec="seconds"),
+        "status": result["status"],
+        "error_summary": result.get("error_summary"),
         "outputs": {
             "raw_jsonl": str(raw_path),
             "sources_json": str(sources_path),
@@ -170,7 +187,7 @@ def cmd_sources(args: argparse.Namespace) -> int:
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     print(str(run_dir))
-    return 0
+    return result["exit_code"]
 
 
 def cmd_run(args: argparse.Namespace) -> int:
