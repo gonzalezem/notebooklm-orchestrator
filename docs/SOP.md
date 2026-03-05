@@ -1,0 +1,122 @@
+# SOP: NotebookLM Orchestrator
+
+Second brain for this repo. Read this before touching code or specs.
+
+---
+
+## Repo entrypoints
+
+| Path | Purpose |
+|---|---|
+| `SPEC.md` | Start here. Points to the active spec index. |
+| `spec/2026-03-04_000_index.md` | Lists all active specs and canonical interview order. |
+| `docs/outputs_template/` | Tracked template for the `outputs/<run_id>/` contract. |
+
+---
+
+## Canonical workflow
+
+**One spec at a time. Never implement before interviewing.**
+
+```
+1. interview   -- read one spec file, ask clarifying questions, surface gaps
+2. plan        -- write a short implementation plan, confirm with user
+3. implement   -- make changes, run verification, update docs if needed
+```
+
+Interview order (from index):
+1. `spec/2026-03-04_010_core.md`
+2. `spec/2026-03-04_020_cli.md`
+3. `spec/2026-03-04_040_youtube.md`
+4. `spec/2026-03-04_030_notebooklm.md`
+5. `spec/2026-03-04_090_testing_ops.md`
+
+---
+
+## Phase gates
+
+### Phase 2: complete when
+
+- `nlm-orch --help` exits 0 and prints usage
+- `nlm-orch doctor` reports non-null paths for both `yt-dlp` and `notebooklm`
+
+### Phase 3: next (do not implement yet)
+
+- `nlm-orch sources` runs `yt-dlp` for real and writes `raw.jsonl` + curated `sources.json`
+- `nlm-orch run` creates a NotebookLM notebook, adds sources, generates slide deck, infographic, and briefing, downloads all artifacts to `outputs/<run_id>/artifacts/`
+
+---
+
+## Setup (macOS)
+
+Use Homebrew Python 3.11. Do not use `/usr/bin/python3` (see Common Failures).
+
+```bash
+/opt/homebrew/bin/python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+python -m pip install -e ".[dev]"
+```
+
+Verify:
+```bash
+nlm-orch --help
+nlm-orch doctor
+```
+
+Auth (once per machine):
+```bash
+notebooklm login
+```
+
+---
+
+## Common failures
+
+### macOS system Python is 3.9.6
+
+`/usr/bin/python3` is the Xcode CLI Tools Python, pinned at 3.9.6. The project requires 3.11+.
+
+Fix: rebuild the venv explicitly.
+```bash
+deactivate
+rm -rf .venv
+/opt/homebrew/bin/python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+```
+
+### zsh autocorrect rewrites `pip` or `python`
+
+zsh may silently correct `pip install` to something else, or shadow the venv `pip` with a system one.
+
+Fix: always call pip through the Python interpreter to guarantee you are using the venv binary.
+```bash
+python -m pip install ...
+python -m pip list
+```
+
+### `doctor` finds tools from the wrong environment
+
+If `nlm-orch doctor` reports unexpected paths (e.g. a global Homebrew `yt-dlp` instead of the venv one), the venv is not activated or PATH is picking up a different install.
+
+Fix:
+```bash
+source .venv/bin/activate
+which yt-dlp        # should be inside .venv/
+which notebooklm    # should be inside .venv/
+nlm-orch doctor
+```
+
+---
+
+## Safety: never commit these
+
+```
+outputs/             # all run artifacts
+~/.notebooklm/storage_state.json
+~/.notebooklm/browser_profile/
+*.cookies
+```
+
+These are listed in `.gitignore`. Do not force-add them.

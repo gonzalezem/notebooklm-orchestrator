@@ -1,0 +1,80 @@
+# ---- macOS ----
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+
+# ---- Python / venv ----
+.venv/
+venv/
+ENV/
+env/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+dist/
+build/
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.cache/
+
+# ---- Jupyter / notebooks ----
+.ipynb_checkpoints/
+
+# ---- IDEs / editors ----
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ---- Project runtime outputs (must not be committed) ----
+outputs/
+*.log
+
+outputs/*
+!outputs/.keep
+
+# ---- NotebookLM / browser automation auth state (do NOT commit) ----
+# Playwright
+playwright/.cache/
+**/playwright-report/
+**/test-results/
+
+# Common cookie/session/state patterns
+**/*cookies*
+**/*cookie*
+**/*session*
+**/*auth*
+**/*token*
+**/*oauth*
+**/*credentials*
+**/*credential*
+**/*secrets*
+**/*secret*
+
+# If notebooklm-py writes local state/cache, keep it out of git
+.notebooklm/
+notebooklm_state/
+notebooklm_cache/
+cache/
+tmp/
+temp/
+
+# ---- Local config overrides ----
+.env
+.env.*
+config.local.*
+configs/local.*
