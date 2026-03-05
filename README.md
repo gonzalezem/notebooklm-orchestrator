@@ -45,14 +45,14 @@ nlm-orch --help
 nlm-orch doctor
 ```
 
-`nlm-orch doctor` checks that required tools (`yt-dlp`, browser driver) are available and prints their versions.
+`nlm-orch doctor` checks that `yt-dlp` and the `notebooklm` CLI are reachable and that auth state exists at `~/.notebooklm/storage_state.json`. Exits 0 only when all three pass.
 
 ## NotebookLM auth
 
 Log in once before running pipelines:
 
 ```bash
-notebooklm login
+nlm-orch login
 ```
 
 This opens a browser, completes Google OAuth, and writes auth state to:
@@ -62,12 +62,22 @@ This opens a browser, completes Google OAuth, and writes auth state to:
 
 **Do not commit these paths.** They are listed in `.gitignore`.
 
+## Implementation status
+
+| Subcommand | Status |
+|---|---|
+| `nlm-orch doctor` | Implemented |
+| `nlm-orch login` | Implemented |
+| `nlm-orch sources "<query>"` | Implemented (real yt-dlp curation, filtering, provenance) |
+| `nlm-orch run "<query>"` | Stub only -- Phase 3b |
+
 ## Outputs contract
 
 Each run writes to `outputs/<run_id>/`:
 
 ```
 outputs/<run_id>/
+  raw.jsonl
   sources.json
   run_manifest.json
   run.log

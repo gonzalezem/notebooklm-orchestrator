@@ -67,6 +67,8 @@ playwright/.cache/
 
 # If notebooklm-py writes local state/cache, keep it out of git
 .notebooklm/
+**/storage_state.json
+**/browser_profile/
 notebooklm_state/
 notebooklm_cache/
 cache/
