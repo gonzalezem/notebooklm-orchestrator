@@ -69,11 +69,21 @@ This opens a browser, completes Google OAuth, and writes auth state to:
 | `nlm-orch doctor` | Implemented |
 | `nlm-orch login` | Implemented |
 | `nlm-orch sources "<query>"` | Implemented (real yt-dlp curation, filtering, provenance) |
-| `nlm-orch run "<query>"` | Stub only -- Phase 3b |
+| `nlm-orch run "<query>"` | Implemented. Supports `--dry-run`; generates deliverables via NotebookLM; records warnings for non-fatal failures (e.g., some sources fail to add). |
+
+## Quickstart
+
+```bash
+nlm-orch sources "claude code skills"
+nlm-orch run "claude code skills" --dry-run
+nlm-orch run "claude code skills" --deliverables briefing
+```
 
 ## Outputs contract
 
 Each run writes to `outputs/<run_id>/`:
+
+Note: `artifacts/` is created even in `--dry-run` (empty).
 
 ```
 outputs/<run_id>/
