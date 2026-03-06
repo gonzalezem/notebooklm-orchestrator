@@ -110,6 +110,16 @@ nlm-orch doctor
 
 ---
 
+## Output cleanup
+
+`outputs/` is gitignored and grows unbounded. To keep the last 20 runs and delete the rest:
+
+```bash
+ls -dt outputs/*/ | tail -n +21 | xargs rm -rf
+```
+
+---
+
 ## Safety: never commit these
 
 ```

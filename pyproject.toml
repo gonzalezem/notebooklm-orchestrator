@@ -14,7 +14,7 @@ authors = [{name = "Emmanuel Gonzalez"}]
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "pytest-cov"]
 
 [project.scripts]
 nlm-orch = "notebooklm_orchestrator.cli:main"
@@ -24,3 +24,9 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "live: requires real NotebookLM auth and network; never run in CI",
+]
