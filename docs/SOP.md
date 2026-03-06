@@ -120,3 +120,22 @@ outputs/             # all run artifacts
 ```
 
 These are listed in `.gitignore`. Do not force-add them.
+
+---
+
+## Smoke test (known good)
+
+```bash
+nlm-orch run "claude code skills" --deliverables briefing
+```
+
+Expected outputs:
+- `outputs/<run_id>/` created
+- `artifacts/briefing.md` exists
+- `notes/ask_0.md` exists
+- `run_manifest.json` has `status=success` (or `success` with warnings for minor source failures)
+
+Troubleshooting:
+- If doctor fails: run `nlm-orch doctor`
+- If auth missing: run `nlm-orch login`
+- If version gate fails: upgrade with `pip install -U notebooklm` (requires >= 0.3.3)
