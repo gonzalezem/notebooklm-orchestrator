@@ -417,6 +417,53 @@ def test_happy_path_success(tmp_path, monkeypatch):
     # source_add_delay_seconds recorded in manifest
     assert manifest["source_add_delay_seconds"] == 2
 
+    # provenance fields
+    assert manifest["timestamp"] == manifest["started_at"]
+    assert manifest["inputs"]["deliverables"] == ["briefing", "slides", "infographic"]
+
+
+# ---------------------------------------------------------------------------
+# 14. Per-deliverable artifact wait timeouts
+# ---------------------------------------------------------------------------
+
+def test_wait_artifact_timeout_per_deliverable(tmp_path, monkeypatch):
+    """slides=900s, infographic=600s, briefing=360s passed to wait_artifact."""
+    src_file = _fake_sources_json(tmp_path, n_included=1)
+    args = _args(tmp_path, sources=str(src_file),
+                 deliverables=["slides", "infographic", "briefing"])
+
+    monkeypatch.setattr(nl_cli, "which_notebooklm", lambda: _NB_PATH)
+    monkeypatch.setattr(nl_cli, "auth_state_path",
+                        lambda: tmp_path / "storage_state.json")
+    (tmp_path / "storage_state.json").touch()
+    monkeypatch.setattr(nl_cli, "get_version", lambda *a: "0.3.3")
+    monkeypatch.setattr(nl_cli, "create_notebook", lambda *a, **k: _NB_ID)
+    monkeypatch.setattr(nl_cli, "use_notebook", lambda *a, **k: None)
+    monkeypatch.setattr(nl_cli, "add_source",
+                        lambda *a, **k: {"ok": True, "source_id": _SRC_ID, "error": None})
+    monkeypatch.setattr(nl_cli, "wait_source", lambda *a, **k: True)
+    monkeypatch.setattr(nl_cli, "ask", lambda *a, **k: "answer")
+    monkeypatch.setattr(nl_cli, "generate_artifact", lambda *a, **k: _TASK_ID)
+
+    recorded_timeouts = []
+    def _wait_recording(*args, timeout=360, **kwargs):
+        recorded_timeouts.append(timeout)
+        return True
+
+    monkeypatch.setattr(nl_cli, "wait_artifact", _wait_recording)
+
+    def _fake_download(nb_path, dl_type, dest, notebook_id, log_path):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("content", encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(nl_cli, "download_artifact", _fake_download)
+
+    rc = cmd_run(args)
+    assert rc == 0
+    # deliverables order: slides, infographic, briefing
+    assert recorded_timeouts == [900, 600, 360]
+
 
 # ---------------------------------------------------------------------------
 # 9. _version_ok unit tests

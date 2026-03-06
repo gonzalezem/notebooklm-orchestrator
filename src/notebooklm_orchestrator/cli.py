@@ -245,6 +245,10 @@ def cmd_run(args: argparse.Namespace) -> int:  # noqa: C901
     mstate: dict = {
         "run_id": run_id,
         "command": "run",
+        "timestamp": started_at,
+        "inputs": {
+            "deliverables": args.deliverables,
+        },
         "query": args.query,
         "config_path": args.config,
         "filters": filters,
@@ -515,8 +519,9 @@ def cmd_run(args: argparse.Namespace) -> int:  # noqa: C901
             any_partial = True
             continue
 
-        # Wait for generation
-        if not nl_cli.wait_artifact(nb_path, task_id, notebook_id, log_path):
+        # Wait for generation (timeout is per-deliverable)
+        artifact_timeout = nl_cli.ARTIFACT_WAIT_TIMEOUTS.get(keyword, nl_cli._ARTIFACT_TIMEOUT)
+        if not nl_cli.wait_artifact(nb_path, task_id, notebook_id, log_path, timeout=artifact_timeout):
             _write_text(log_path, f"Artifact wait timed out for {keyword}.\n")
             artifact_entry["status"] = "wait_timeout"
             artifacts_result.append(artifact_entry)

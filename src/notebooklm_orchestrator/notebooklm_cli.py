@@ -25,8 +25,16 @@ DELIVERABLE_MAP: dict[str, tuple[str, str, str]] = {
 }
 
 _DEFAULT_TIMEOUT = 120
-_ARTIFACT_TIMEOUT = 360   # generation can be slow
+_ARTIFACT_TIMEOUT = 360   # default / briefing
 _SOURCE_WAIT_TIMEOUT = 90
+
+# Per-deliverable artifact wait timeouts (seconds).
+# slides and infographics take longer to render than briefings.
+ARTIFACT_WAIT_TIMEOUTS: dict[str, int] = {
+    "briefing":    360,
+    "slides":      900,
+    "infographic": 600,
+}
 
 
 # ---------------------------------------------------------------------------
