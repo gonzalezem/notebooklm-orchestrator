@@ -79,6 +79,23 @@ nlm-orch run "claude code skills" --dry-run
 nlm-orch run "claude code skills" --deliverables briefing
 ```
 
+## Prompt packs and `--intent`
+
+Each `nlm-orch run` loads a prompt pack from `prompts/packs/<intent>/` before any `--prompts` files. Prompts are sent to NotebookLM in lexical order within the pack, then user-supplied files.
+
+| Intent | Pack directory | Use when |
+|---|---|---|
+| `strategy` (default) | `prompts/packs/strategy/` | Landscape overview, risks, practices |
+| `implementation` | `prompts/packs/implementation/` | Architecture decisions, checklists |
+| `deliverables` | `prompts/packs/deliverables/` | Deck narrative, infographic spec |
+
+Example:
+```bash
+nlm-orch run "claude code skills" --intent implementation --deliverables briefing
+```
+
+If the pack directory is missing or empty and no `--prompts` files are provided, the run exits 2.
+
 ## Outputs contract
 
 Each run writes to `outputs/<run_id>/`:

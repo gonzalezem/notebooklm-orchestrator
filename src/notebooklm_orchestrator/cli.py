@@ -75,6 +75,25 @@ def _which(cmd: str) -> Optional[str]:
     return shutil.which(cmd)
 
 
+def _load_pack_prompts(intent: str, pack_base: Path) -> list[str]:
+    """Return lex-sorted list of *.md/*.txt paths in prompts/packs/<intent>/. Empty if missing."""
+    pack_dir = pack_base / intent
+    if not pack_dir.is_dir():
+        return []
+    return sorted(
+        str(p) for p in pack_dir.iterdir()
+        if p.suffix in (".md", ".txt") and p.is_file()
+    )
+
+
+def _render_prompt(text: str, query: str, intent: str, deliverables: list) -> str:
+    """Replace known placeholders. Unknown placeholders are left unchanged."""
+    text = text.replace("{{query}}", query or "")
+    text = text.replace("{{intent}}", intent)
+    text = text.replace("{{deliverables}}", ", ".join(deliverables))
+    return text
+
+
 def _version_ok(version_str: str, minimum: str) -> bool:
     """Return True if version_str >= minimum (x.y.z tuples). Unparseable -> True."""
     try:
@@ -248,6 +267,10 @@ def cmd_run(args: argparse.Namespace) -> int:  # noqa: C901
         "timestamp": started_at,
         "inputs": {
             "deliverables": args.deliverables,
+            "intent": args.intent,
+            "prompts_pack_dir": None,
+            "prompts_pack_files": [],
+            "prompts_user_files": [],
         },
         "query": args.query,
         "config_path": args.config,
@@ -386,23 +409,44 @@ def cmd_run(args: argparse.Namespace) -> int:  # noqa: C901
         return 0
 
     # ------------------------------------------------------------------
-    # 6. Load and snapshot prompts
+    # 6. Load and snapshot prompts (pack + user files)
     # ------------------------------------------------------------------
-    prompt_files = args.prompts or []
-    if not prompt_files:
-        default_prompt_path = Path("prompts/analysis.md")
-        if default_prompt_path.exists():
-            prompt_files = [str(default_prompt_path)]
-        else:
-            prompt_files = []
+    pack_base = Path("prompts/packs")
+    pack_files = _load_pack_prompts(args.intent, pack_base)
+    user_files = args.prompts or []
+    pack_dir_str = str(pack_base / args.intent)
 
+    if not pack_files:
+        if user_files:
+            msg = f"Pack directory {pack_dir_str} is missing or empty; using --prompts files only."
+            _write_text(log_path, f"Warning: {msg}\n")
+            mstate["warnings"].append({"type": "pack_missing_or_empty", "pack_dir": pack_dir_str})
+        else:
+            msg = (
+                f"Pack directory {pack_dir_str} is missing or empty "
+                "and no --prompts files were provided. Nothing to ask."
+            )
+            print(msg, file=sys.stderr)
+            _save_manifest("failed", failed_step="prompts_load", error_summary=msg)
+            return 2
+
+    mstate["inputs"]["prompts_pack_dir"] = pack_dir_str
+    mstate["inputs"]["prompts_pack_files"] = pack_files
+    mstate["inputs"]["prompts_user_files"] = user_files
+
+    prompt_files = pack_files + user_files
     prompts_snapshot: list[dict] = []
     for pf in prompt_files:
         try:
-            text = Path(pf).read_text(encoding="utf-8").strip()
-            prompts_snapshot.append({"file": pf, "text": text})
+            raw = Path(pf).read_text(encoding="utf-8").strip()
+            rendered = _render_prompt(raw, args.query or "", args.intent, args.deliverables)
+            prompts_snapshot.append({"file": pf, "text": rendered})
         except OSError as exc:
-            _write_text(log_path, f"Warning: could not read prompt file {pf}: {exc}\n")
+            msg = f"Failed to read prompt file {pf}: {exc}"
+            _write_text(log_path, f"{msg}\n")
+            print(msg, file=sys.stderr)
+            _save_manifest("partial", failed_step="prompts_load", error_summary=msg)
+            return 1
 
     # ------------------------------------------------------------------
     # 7. Create or reuse notebook
@@ -682,6 +726,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--deliverables", nargs="+", default=["slides", "infographic", "briefing"],
         metavar="ITEM",
         help="Deliverables to generate: slides infographic briefing (default: all three)",
+    )
+    sp.add_argument(
+        "--intent", default="strategy",
+        choices=["strategy", "implementation", "deliverables"],
+        help="Prompt pack to use (default: strategy)",
     )
     sp.add_argument(
         "--dry-run", action="store_true",

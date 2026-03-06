@@ -35,6 +35,7 @@ def _args(tmp_path: Path, **overrides) -> argparse.Namespace:
         notebook_id=None,
         prompts=None,
         deliverables=["briefing"],
+        intent="strategy",
         dry_run=False,
         max_results=5,
         recency="6months",

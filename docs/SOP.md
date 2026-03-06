@@ -133,6 +133,23 @@ These are listed in `.gitignore`. Do not force-add them.
 
 ---
 
+## Intent pack runs
+
+One example per intent:
+
+```bash
+# Default: strategy overview, risks, practices taxonomy
+nlm-orch run "claude code skills" --deliverables briefing
+
+# Architecture and implementation checklist
+nlm-orch run "claude code skills" --intent implementation --deliverables briefing
+
+# Deck narrative and infographic spec
+nlm-orch run "claude code skills" --intent deliverables --deliverables slides infographic
+```
+
+---
+
 ## Smoke test (known good)
 
 ```bash
