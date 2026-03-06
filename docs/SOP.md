@@ -150,6 +150,19 @@ nlm-orch run "claude code skills" --intent deliverables --deliverables slides in
 
 ---
 
+## Pack validation
+
+Run one command per intent and verify the outputs are distinct:
+
+```bash
+nlm-orch run "Claude Code NotebookLM workflow" --deliverables briefing --intent strategy
+nlm-orch run "Claude Code NotebookLM workflow" --deliverables briefing --intent implementation
+```
+
+Check `outputs/<run_id>/notes/ask_*.md`: strategy output should contain `Hard-to-reverse decisions`; implementation output should contain `Map to our stack (nlm-orch)` and `Troubleshooting (manifest-driven)`.
+
+---
+
 ## Smoke test (known good)
 
 ```bash
