@@ -190,35 +190,36 @@ def cmd_sources(args: argparse.Namespace) -> int:
     return result["exit_code"]
 
 
-def cmd_run(args: argparse.Namespace) -> int:
+def cmd_run(args: argparse.Namespace) -> int:  # noqa: C901
+    from . import notebooklm_cli as nl_cli
+    from .sources import curate_sources, SELECTION_CAP
+
+    # ------------------------------------------------------------------
+    # 1. Input validation
+    # ------------------------------------------------------------------
     if not args.query and not args.sources:
         print("error: <query> is required unless --sources is provided.", file=sys.stderr)
         return 2
 
+    # ------------------------------------------------------------------
+    # 2. Create run dir early so partial manifests can always be written
+    # ------------------------------------------------------------------
     outputs_dir = Path(args.outputs_dir).resolve()
     outputs_dir.mkdir(parents=True, exist_ok=True)
 
     run_id = args.run_id or _make_run_id(args.query)
     run_dir = _ensure_run_dir(outputs_dir, run_id)
+    notes_dir = run_dir / "notes"
+    notes_dir.mkdir(exist_ok=True)
 
     raw_path = run_dir / "raw.jsonl"
     sources_path = run_dir / "sources.json"
+    manifest_path = run_dir / "run_manifest.json"
     log_path = run_dir / "run.log"
+    artifacts_dir = run_dir / "artifacts"
 
-    _write_text(log_path, "Phase 2 stub: run command executed.\n")
-    _write_text(raw_path, "")  # placeholder; Phase 3 writes real yt-dlp metadata
-
-    if args.sources:
-        # Copy or reference the supplied sources.json
-        import shutil as _shutil
-        _shutil.copy2(args.sources, sources_path)
-    else:
-        sources_doc = {
-            "query": args.query,
-            "note": "Phase 2 stub. Phase 3 will populate real curated sources via yt-dlp.",
-            "sources": [],
-        }
-        sources_path.write_text(json.dumps(sources_doc, indent=2), encoding="utf-8")
+    started_at = datetime.now().isoformat(timespec="seconds")
+    _write_text(log_path, f"nlm-orch run started. run_id={run_id}\n")
 
     filters = {
         "max_results": args.max_results,
@@ -228,29 +229,325 @@ def cmd_run(args: argparse.Namespace) -> int:
         "channel_allow": args.channel_allow,
         "channel_block": args.channel_block,
     }
-    now = datetime.now().isoformat(timespec="seconds")
-    manifest = {
+
+    # Manifest accumulator — written on every exit path
+    mstate: dict = {
         "run_id": run_id,
         "command": "run",
         "query": args.query,
         "config_path": args.config,
         "filters": filters,
-        "sources_path": args.sources,
-        "notebook_id": args.notebook_id,
-        "prompts": args.prompts or [],
-        "deliverables": args.deliverables,
         "dry_run": args.dry_run,
-        "started_at": now,
-        "finished_at": now,
-        "status": "dry-run" if args.dry_run else "stub",
-        "artifacts": [],
+        "deliverables_requested": args.deliverables,
+        "started_at": started_at,
+        "finished_at": started_at,
+        "status": "partial",
+        "failed_step": None,
         "error_summary": None,
-        "note": "Phase 2 stub. Phase 3 will implement yt-dlp curation and NotebookLM operations.",
+        "notebooklm_version": None,
+        "notebook_id": args.notebook_id,
+        "notebook_name": None,
+        "candidate_count": 0,
+        "included_count": 0,
+        "excluded_count": 0,
+        "sources_attempted": 0,
+        "sources_add_ok": 0,
+        "sources_add_failed": 0,
+        "sources_failed_urls": [],
+        "prompts_used": [],
+        "artifacts": [],
+        "missing_artifacts": [],
+        "warnings": [],
+        "outputs": {
+            "raw_jsonl": str(raw_path),
+            "sources_json": str(sources_path),
+            "run_log": str(log_path),
+        },
     }
-    (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
-    print(str(run_dir))
+    def _save_manifest(status: str, *, failed_step: Optional[str] = None,
+                       error_summary: Optional[str] = None) -> None:
+        mstate["status"] = status
+        mstate["failed_step"] = failed_step
+        mstate["error_summary"] = error_summary
+        mstate["finished_at"] = datetime.now().isoformat(timespec="seconds")
+        manifest_path.write_text(json.dumps(mstate, indent=2), encoding="utf-8")
+
+    # ------------------------------------------------------------------
+    # 3. notebooklm preflight (skip for dry-run: no NLM calls will happen)
+    # ------------------------------------------------------------------
+    if not args.dry_run:
+        nb_path = nl_cli.which_notebooklm()
+        if nb_path is None:
+            msg = "notebooklm CLI not found. Install notebooklm-py in this venv."
+            print(msg, file=sys.stderr)
+            _save_manifest("failed", failed_step="preflight", error_summary=msg)
+            return 4
+
+        auth = nl_cli.auth_state_path()
+        if not auth.exists():
+            msg = f"Auth state not found at {auth}. Run: nlm-orch login"
+            print(msg, file=sys.stderr)
+            _save_manifest("failed", failed_step="auth", error_summary=msg)
+            return 5
+
+        mstate["notebooklm_version"] = nl_cli.get_version(nb_path, log_path)
+    else:
+        nb_path = None  # not used in dry-run
+
+    # ------------------------------------------------------------------
+    # 4. Source acquisition
+    # ------------------------------------------------------------------
+    if args.sources:
+        # Use provided sources.json; copy for provenance
+        import shutil as _shutil
+        _shutil.copy2(args.sources, sources_path)
+        raw_path.touch()
+        _write_text(log_path, f"Using provided sources: {args.sources}\n")
+    else:
+        # Run real yt-dlp curation
+        ytdlp_path = _which("yt-dlp")
+        if ytdlp_path is None:
+            msg = "yt-dlp not found. Install with: brew install yt-dlp"
+            print(msg, file=sys.stderr)
+            _save_manifest("failed", failed_step="sources", error_summary=msg)
+            return 4
+
+        src_result = curate_sources(
+            ytdlp_path=ytdlp_path,
+            query=args.query,
+            max_results=args.max_results,
+            recency=args.recency,
+            max_duration=args.max_duration,
+            min_views=args.min_views,
+            channel_allow=args.channel_allow,
+            channel_block=args.channel_block,
+            raw_path=raw_path,
+            sources_path=sources_path,
+            log_path=log_path,
+        )
+        mstate["candidate_count"] = src_result["candidate_count"]
+        mstate["included_count"] = src_result["included_count"]
+        mstate["excluded_count"] = src_result["excluded_count"]
+
+        if src_result["exit_code"] == 1:
+            _save_manifest("failed", failed_step="sources",
+                           error_summary=src_result.get("error_summary"))
+            return 1
+        if src_result["included_count"] == 0:
+            _save_manifest("partial", failed_step="sources",
+                           error_summary=src_result.get("error_summary"))
+            return 3
+
+    # Read included sources from sources.json
+    included_sources = _load_included_sources(sources_path)
+    if not args.sources:
+        pass  # counts already set above
+    else:
+        all_srcs = _load_all_sources(sources_path)
+        mstate["candidate_count"] = len(all_srcs)
+        mstate["included_count"] = len(included_sources)
+        mstate["excluded_count"] = len(all_srcs) - len(included_sources)
+
+    if not included_sources and not args.dry_run:
+        msg = "No included sources in sources.json."
+        _save_manifest("partial", failed_step="sources", error_summary=msg)
+        print(msg, file=sys.stderr)
+        return 3
+
+    # ------------------------------------------------------------------
+    # 5. Dry-run exit: sources done, no NLM calls
+    # ------------------------------------------------------------------
+    if args.dry_run:
+        _save_manifest("dry-run")
+        print(str(run_dir))
+        return 0
+
+    # ------------------------------------------------------------------
+    # 6. Load and snapshot prompts
+    # ------------------------------------------------------------------
+    prompt_files = args.prompts or []
+    if not prompt_files:
+        default_prompt_path = Path("prompts/analysis.md")
+        if default_prompt_path.exists():
+            prompt_files = [str(default_prompt_path)]
+        else:
+            prompt_files = []
+
+    prompts_snapshot: list[dict] = []
+    for pf in prompt_files:
+        try:
+            text = Path(pf).read_text(encoding="utf-8").strip()
+            prompts_snapshot.append({"file": pf, "text": text})
+        except OSError as exc:
+            _write_text(log_path, f"Warning: could not read prompt file {pf}: {exc}\n")
+
+    # ------------------------------------------------------------------
+    # 7. Create or reuse notebook
+    # ------------------------------------------------------------------
+    try:
+        if args.notebook_id:
+            notebook_id = args.notebook_id
+            notebook_name = None
+            nl_cli.use_notebook(nb_path, notebook_id, log_path)
+            _write_text(log_path, f"Reusing notebook: {notebook_id}\n")
+        else:
+            notebook_name = run_id  # human-readable slug+timestamp
+            notebook_id = nl_cli.create_notebook(nb_path, notebook_name, log_path)
+            nl_cli.use_notebook(nb_path, notebook_id, log_path)
+            _write_text(log_path, f"Created notebook: {notebook_id} ({notebook_name})\n")
+    except RuntimeError as exc:
+        msg = str(exc)
+        _save_manifest("failed", failed_step="notebook", error_summary=msg)
+        print(f"Notebook error: {msg}", file=sys.stderr)
+        return 1
+
+    mstate["notebook_id"] = notebook_id
+    mstate["notebook_name"] = notebook_name
+
+    # ------------------------------------------------------------------
+    # 8. Add sources (continue on partial failure)
+    # ------------------------------------------------------------------
+    urls = [s["url"] for s in included_sources if s.get("url")]
+    urls = urls[:nl_cli.NL_MAX_SOURCES]
+    add_ok, add_failed, failed_urls = 0, 0, []
+
+    for url in urls:
+        result = nl_cli.add_source(nb_path, url, notebook_id, log_path)
+        if result["ok"]:
+            add_ok += 1
+            # Wait for source to process before adding next
+            if result["source_id"]:
+                nl_cli.wait_source(nb_path, result["source_id"], notebook_id, log_path)
+        else:
+            add_failed += 1
+            failed_urls.append(url)
+            _write_text(log_path, f"Source add failed for {url}: {result['error']}\n")
+
+    mstate["sources_attempted"] = len(urls)
+    mstate["sources_add_ok"] = add_ok
+    mstate["sources_add_failed"] = add_failed
+    mstate["sources_failed_urls"] = failed_urls
+
+    if add_ok == 0 and urls:
+        msg = "All source additions failed."
+        _save_manifest("partial", failed_step="add_sources", error_summary=msg)
+        print(msg, file=sys.stderr)
+        return 1
+
+    # Source add failures are non-fatal warnings (not partial) if at least 1 succeeded
+    if add_failed > 0:
+        mstate["warnings"].append({
+            "type": "source_add_failed",
+            "count": add_failed,
+            "urls": failed_urls,
+        })
+
+    any_partial = False  # only set True by deliverable failures below
+
+    # ------------------------------------------------------------------
+    # 9. Ask prompts
+    # ------------------------------------------------------------------
+    for n, prompt in enumerate(prompts_snapshot):
+        response_file = notes_dir / f"ask_{n}.md"
+        try:
+            answer = nl_cli.ask(nb_path, prompt["text"], notebook_id, log_path)
+            response_file.write_text(answer, encoding="utf-8")
+            prompt["response_file"] = str(response_file)
+            _write_text(log_path, f"Prompt {n} answered. Saved to {response_file}\n")
+        except RuntimeError as exc:
+            _write_text(log_path, f"Warning: prompt {n} failed: {exc}\n")
+            prompt["response_file"] = None
+            mstate["warnings"].append({"type": "prompt_failed", "prompt_index": n})
+
+    mstate["prompts_used"] = prompts_snapshot
+
+    # ------------------------------------------------------------------
+    # 10. Generate and download deliverables
+    # ------------------------------------------------------------------
+    artifacts_result: list[dict] = []
+    missing_artifacts: list[str] = []
+
+    for keyword in args.deliverables:
+        if keyword not in nl_cli.DELIVERABLE_MAP:
+            _write_text(log_path, f"Warning: unknown deliverable '{keyword}', skipping.\n")
+            continue
+
+        gen_type, dl_type, filename = nl_cli.DELIVERABLE_MAP[keyword]
+        dest = artifacts_dir / filename
+        artifact_entry: dict = {"keyword": keyword, "filename": filename, "status": "pending"}
+
+        # Generate
+        try:
+            task_id = nl_cli.generate_artifact(nb_path, gen_type, notebook_id, log_path)
+        except RuntimeError as exc:
+            _write_text(log_path, f"Generate {keyword} failed: {exc}\n")
+            artifact_entry["status"] = "generate_failed"
+            artifact_entry["error"] = str(exc)
+            artifacts_result.append(artifact_entry)
+            missing_artifacts.append(filename)
+            any_partial = True
+            continue
+
+        # Wait for generation
+        if not nl_cli.wait_artifact(nb_path, task_id, notebook_id, log_path):
+            _write_text(log_path, f"Artifact wait timed out for {keyword}.\n")
+            artifact_entry["status"] = "wait_timeout"
+            artifacts_result.append(artifact_entry)
+            missing_artifacts.append(filename)
+            any_partial = True
+            continue
+
+        # Download
+        if nl_cli.download_artifact(nb_path, dl_type, dest, notebook_id, log_path):
+            artifact_entry["status"] = "downloaded"
+            artifact_entry["path"] = str(dest)
+            _write_text(log_path, f"Downloaded {keyword} -> {dest}\n")
+        else:
+            _write_text(log_path, f"Download failed for {keyword}.\n")
+            artifact_entry["status"] = "download_failed"
+            missing_artifacts.append(filename)
+            any_partial = True
+
+        artifacts_result.append(artifact_entry)
+
+    mstate["artifacts"] = artifacts_result
+    mstate["missing_artifacts"] = missing_artifacts
+
+    # ------------------------------------------------------------------
+    # 11. Write final manifest
+    # ------------------------------------------------------------------
+    final_status = "partial" if any_partial else "success"
+    _save_manifest(final_status)
+
+    downloaded = [a for a in artifacts_result if a["status"] == "downloaded"]
+    print(
+        f"{run_dir}  "
+        f"[notebook={notebook_id[:8]}... "
+        f"sources={add_ok}/{len(urls)} "
+        f"artifacts={len(downloaded)}/{len(args.deliverables)}]"
+    )
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Helpers for sources.json loading
+# ---------------------------------------------------------------------------
+
+def _load_all_sources(sources_path: Path) -> list[dict]:
+    try:
+        data = json.loads(sources_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict) and "sources" in data:
+        return data["sources"]
+    return []
+
+
+def _load_included_sources(sources_path: Path) -> list[dict]:
+    return [s for s in _load_all_sources(sources_path) if s.get("included", True)]
 
 
 # ---------------------------------------------------------------------------

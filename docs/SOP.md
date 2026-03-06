@@ -38,7 +38,7 @@ Interview order (from index):
 ### Phase 2: complete when
 
 - `nlm-orch --help` exits 0 and prints usage
-- `nlm-orch doctor` reports non-null paths for both `yt-dlp` and `notebooklm`
+- `nlm-orch doctor` exits 0 (requires: `yt-dlp` found, `notebooklm` CLI found, `~/.notebooklm/storage_state.json` present)
 
 ### Phase 3: next (do not implement yet)
 
@@ -66,7 +66,7 @@ nlm-orch doctor
 
 Auth (once per machine):
 ```bash
-notebooklm login
+nlm-orch login
 ```
 
 ---
@@ -98,13 +98,13 @@ python -m pip list
 
 ### `doctor` finds tools from the wrong environment
 
-If `nlm-orch doctor` reports unexpected paths (e.g. a global Homebrew `yt-dlp` instead of the venv one), the venv is not activated or PATH is picking up a different install.
+`doctor` resolves tools in order: venv-local, then Homebrew, then PATH. `yt-dlp` is expected at `/opt/homebrew/bin/yt-dlp` (Homebrew install). `notebooklm` is expected inside `.venv/bin/` (pip install). If `doctor` reports null for either, the venv is not activated or the tool is not installed.
 
 Fix:
 ```bash
 source .venv/bin/activate
-which yt-dlp        # should be inside .venv/
-which notebooklm    # should be inside .venv/
+which notebooklm    # should be inside .venv/bin/
+which yt-dlp        # should be /opt/homebrew/bin/yt-dlp or inside .venv/bin/
 nlm-orch doctor
 ```
 
