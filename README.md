@@ -45,7 +45,7 @@ nlm-orch --help
 nlm-orch doctor
 ```
 
-`nlm-orch doctor` checks that `yt-dlp` and the `notebooklm` CLI are reachable and that auth state exists at `~/.notebooklm/storage_state.json`. Exits 0 only when all three pass.
+`nlm-orch doctor` checks that `yt-dlp` and the `notebooklm` CLI are reachable and that auth state exists at `~/.notebooklm/storage_state.json`. Exits 0 only when all three pass. It also enforces notebooklm CLI version >= 0.3.3 (fails fast if older).
 
 ## NotebookLM auth
 
@@ -60,7 +60,7 @@ This opens a browser, completes Google OAuth, and writes auth state to:
 - `~/.notebooklm/storage_state.json` - session cookies
 - `~/.notebooklm/browser_profile/` - browser profile
 
-**Do not commit these paths.** They are listed in `.gitignore`.
+**Do not copy these into the repo.** They live outside the repo under `~/.notebooklm/` and are not meant to be committed.
 
 ## Implementation status
 
@@ -83,7 +83,7 @@ nlm-orch run "claude code skills" --deliverables briefing
 
 Each run writes to `outputs/<run_id>/`:
 
-Note: `artifacts/` is created even in `--dry-run` (empty).
+Note: `artifacts/` is created even in `--dry-run` (empty). `notes/` is created when prompts are asked; ask responses are saved as `ask_N.md`.
 
 ```
 outputs/<run_id>/
@@ -95,6 +95,9 @@ outputs/<run_id>/
     deck.pdf
     infographic.png
     briefing.md
+  notes/
+    ask_0.md
+    ask_1.md
 ```
 
 The tracked template for this structure lives at `docs/outputs_template/`.
