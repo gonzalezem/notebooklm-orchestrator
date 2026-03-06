@@ -643,3 +643,85 @@ def test_notes_dir_and_ask_file_written(tmp_path, monkeypatch):
 
     manifest = json.loads((run_dir / "run_manifest.json").read_text())
     assert manifest["prompts_used"][0]["response_file"] == str(ask_file)
+
+
+# ---------------------------------------------------------------------------
+# 15. DONE line printed on stdout for success and partial outcomes
+# ---------------------------------------------------------------------------
+
+def test_done_line_success(tmp_path, monkeypatch, capsys):
+    """DONE line is printed to stdout with correct format on success."""
+    src_file = _fake_sources_json(tmp_path, n_included=2)
+    args = _args(tmp_path, sources=str(src_file), deliverables=["briefing"])
+
+    monkeypatch.setattr(nl_cli, "which_notebooklm", lambda: _NB_PATH)
+    monkeypatch.setattr(nl_cli, "auth_state_path",
+                        lambda: tmp_path / "storage_state.json")
+    (tmp_path / "storage_state.json").touch()
+    monkeypatch.setattr(nl_cli, "get_version", lambda *a: "0.3.3")
+    monkeypatch.setattr(nl_cli, "create_notebook", lambda *a, **k: _NB_ID)
+    monkeypatch.setattr(nl_cli, "use_notebook", lambda *a, **k: None)
+    monkeypatch.setattr(nl_cli, "add_source",
+                        lambda *a, **k: {"ok": True, "source_id": _SRC_ID, "error": None})
+    monkeypatch.setattr(nl_cli, "wait_source", lambda *a, **k: True)
+    monkeypatch.setattr(nl_cli, "ask", lambda *a, **k: "answer")
+    monkeypatch.setattr(nl_cli, "generate_artifact", lambda *a, **k: _TASK_ID)
+    monkeypatch.setattr(nl_cli, "wait_artifact", lambda *a, **k: True)
+
+    def _fake_download(nb_path, dl_type, dest, notebook_id, log_path):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("content", encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(nl_cli, "download_artifact", _fake_download)
+
+    rc = cmd_run(args)
+    assert rc == 0
+
+    out = capsys.readouterr().out
+    done_lines = [l for l in out.splitlines() if l.startswith("DONE:")]
+    assert len(done_lines) == 1, f"Expected exactly one DONE line, got: {out!r}"
+    done = done_lines[0]
+    assert "status=success" in done
+    assert "sources=2/2" in done
+    assert "artifacts=1/1" in done
+
+
+def test_done_line_partial(tmp_path, monkeypatch, capsys):
+    """DONE line still printed when status=partial (deliverable download fails)."""
+    src_file = _fake_sources_json(tmp_path, n_included=1)
+    args = _args(tmp_path, sources=str(src_file), deliverables=["briefing", "slides"])
+
+    monkeypatch.setattr(nl_cli, "which_notebooklm", lambda: _NB_PATH)
+    monkeypatch.setattr(nl_cli, "auth_state_path",
+                        lambda: tmp_path / "storage_state.json")
+    (tmp_path / "storage_state.json").touch()
+    monkeypatch.setattr(nl_cli, "get_version", lambda *a: "0.3.3")
+    monkeypatch.setattr(nl_cli, "create_notebook", lambda *a, **k: _NB_ID)
+    monkeypatch.setattr(nl_cli, "use_notebook", lambda *a, **k: None)
+    monkeypatch.setattr(nl_cli, "add_source",
+                        lambda *a, **k: {"ok": True, "source_id": _SRC_ID, "error": None})
+    monkeypatch.setattr(nl_cli, "wait_source", lambda *a, **k: True)
+    monkeypatch.setattr(nl_cli, "ask", lambda *a, **k: "answer")
+    monkeypatch.setattr(nl_cli, "generate_artifact", lambda *a, **k: _TASK_ID)
+    monkeypatch.setattr(nl_cli, "wait_artifact", lambda *a, **k: True)
+
+    # briefing succeeds, slides download fails
+    def _selective_download(nb_path, dl_type, dest, notebook_id, log_path):
+        if dl_type == "report":
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text("content", encoding="utf-8")
+            return True
+        return False
+
+    monkeypatch.setattr(nl_cli, "download_artifact", _selective_download)
+
+    rc = cmd_run(args)
+    assert rc == 0
+
+    out = capsys.readouterr().out
+    done_lines = [l for l in out.splitlines() if l.startswith("DONE:")]
+    assert len(done_lines) == 1
+    done = done_lines[0]
+    assert "status=partial" in done
+    assert "artifacts=1/2" in done

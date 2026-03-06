@@ -553,8 +553,8 @@ def cmd_run(args: argparse.Namespace) -> int:  # noqa: C901
 
     downloaded = [a for a in artifacts_result if a["status"] == "downloaded"]
     print(
-        f"{run_dir}  "
-        f"[notebook={notebook_id[:8]}... "
+        f"DONE: {run_dir} "
+        f"[status={final_status} "
         f"sources={add_ok}/{len(urls)} "
         f"artifacts={len(downloaded)}/{len(args.deliverables)}]"
     )
