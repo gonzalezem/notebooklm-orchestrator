@@ -10,12 +10,18 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import notebooklm_orchestrator.notebooklm_cli as nl_cli
-from notebooklm_orchestrator.cli import cmd_run
+from notebooklm_orchestrator.cli import cmd_run, _version_ok
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def no_sleep(monkeypatch):
+    """Suppress time.sleep in all tests except those that explicitly test it."""
+    monkeypatch.setattr("notebooklm_orchestrator.cli.time.sleep", lambda s: None)
+
 
 @pytest.fixture()
 def tmp_outputs(tmp_path: Path) -> Path:
@@ -403,3 +409,190 @@ def test_happy_path_success(tmp_path, monkeypatch):
     assert (run_dir / "artifacts" / "briefing.md").exists()
     assert (run_dir / "artifacts" / "deck.pdf").exists()
     assert (run_dir / "artifacts" / "infographic.png").exists()
+
+    # notes/ dir created and ask_0.md written
+    assert (run_dir / "notes").is_dir()
+    assert (run_dir / "notes" / "ask_0.md").exists()
+
+    # source_add_delay_seconds recorded in manifest
+    assert manifest["source_add_delay_seconds"] == 2
+
+
+# ---------------------------------------------------------------------------
+# 9. _version_ok unit tests
+# ---------------------------------------------------------------------------
+
+def test_version_ok_equal():
+    assert _version_ok("0.3.3", "0.3.3") is True
+
+def test_version_ok_greater():
+    assert _version_ok("0.4.0", "0.3.3") is True
+
+def test_version_ok_below():
+    assert _version_ok("0.3.2", "0.3.3") is False
+
+def test_version_ok_unparseable_passes():
+    assert _version_ok("unknown", "0.3.3") is True
+
+def test_version_ok_empty_passes():
+    assert _version_ok("", "0.3.3") is True
+
+
+# ---------------------------------------------------------------------------
+# 10. Version gate: version < 0.3.3 exits 4 with status=failed
+# ---------------------------------------------------------------------------
+
+def test_version_gate_exits_4(tmp_path, monkeypatch):
+    """If notebooklm version < 0.3.3, exit 4 and write failed manifest."""
+    src_file = _fake_sources_json(tmp_path)
+    args = _args(tmp_path, sources=str(src_file))
+
+    monkeypatch.setattr(nl_cli, "which_notebooklm", lambda: _NB_PATH)
+    monkeypatch.setattr(nl_cli, "auth_state_path",
+                        lambda: tmp_path / "storage_state.json")
+    (tmp_path / "storage_state.json").touch()
+    monkeypatch.setattr(nl_cli, "get_version", lambda *a: "0.3.2")
+
+    rc = cmd_run(args)
+    assert rc == 4
+
+    manifest = json.loads((tmp_path / "outputs" / "test_run_id" / "run_manifest.json").read_text())
+    assert manifest["status"] == "failed"
+    assert manifest["failed_step"] == "preflight"
+    assert "0.3.2" in manifest["error_summary"]
+
+
+# ---------------------------------------------------------------------------
+# 11. Rate limiting: time.sleep called between source adds
+# ---------------------------------------------------------------------------
+
+def test_rate_limit_delay_called_between_adds(tmp_path, monkeypatch):
+    """time.sleep(2) must be called between source adds (N-1 times for N sources)."""
+    src_file = _fake_sources_json(tmp_path, n_included=3)
+    args = _args(tmp_path, sources=str(src_file), deliverables=["briefing"])
+
+    monkeypatch.setattr(nl_cli, "which_notebooklm", lambda: _NB_PATH)
+    monkeypatch.setattr(nl_cli, "auth_state_path",
+                        lambda: tmp_path / "storage_state.json")
+    (tmp_path / "storage_state.json").touch()
+    monkeypatch.setattr(nl_cli, "get_version", lambda *a: "0.3.3")
+    monkeypatch.setattr(nl_cli, "create_notebook", lambda *a, **k: _NB_ID)
+    monkeypatch.setattr(nl_cli, "use_notebook", lambda *a, **k: None)
+    monkeypatch.setattr(nl_cli, "add_source",
+                        lambda *a, **k: {"ok": True, "source_id": _SRC_ID, "error": None})
+    monkeypatch.setattr(nl_cli, "wait_source", lambda *a, **k: True)
+    monkeypatch.setattr(nl_cli, "ask", lambda *a, **k: "answer")
+    monkeypatch.setattr(nl_cli, "generate_artifact", lambda *a, **k: _TASK_ID)
+    monkeypatch.setattr(nl_cli, "wait_artifact", lambda *a, **k: True)
+
+    def _fake_download(nb_path, dl_type, dest, notebook_id, log_path):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("content", encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(nl_cli, "download_artifact", _fake_download)
+
+    sleep_calls = []
+    monkeypatch.setattr("notebooklm_orchestrator.cli.time.sleep",
+                        lambda s: sleep_calls.append(s))
+
+    rc = cmd_run(args)
+    assert rc == 0
+    # 3 sources -> 2 sleeps (not after the last one)
+    assert sleep_calls == [2, 2]
+
+
+# ---------------------------------------------------------------------------
+# 12. source_add_no_id: ok=True but source_id=None -> warning, count as succeeded
+# ---------------------------------------------------------------------------
+
+def test_source_add_no_id_warning(tmp_path, monkeypatch):
+    """add_source ok=True but source_id=None: count as add_ok, emit source_add_no_id warning."""
+    src_file = _fake_sources_json(tmp_path, n_included=2)
+    args = _args(tmp_path, sources=str(src_file), deliverables=["briefing"])
+
+    monkeypatch.setattr(nl_cli, "which_notebooklm", lambda: _NB_PATH)
+    monkeypatch.setattr(nl_cli, "auth_state_path",
+                        lambda: tmp_path / "storage_state.json")
+    (tmp_path / "storage_state.json").touch()
+    monkeypatch.setattr(nl_cli, "get_version", lambda *a: "0.3.3")
+    monkeypatch.setattr(nl_cli, "create_notebook", lambda *a, **k: _NB_ID)
+    monkeypatch.setattr(nl_cli, "use_notebook", lambda *a, **k: None)
+
+    call_count = {"n": 0}
+    def _no_id_add(nb_path, url, notebook_id, log_path):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return {"ok": True, "source_id": None, "error": None}  # no id
+        return {"ok": True, "source_id": _SRC_ID, "error": None}
+
+    wait_called = []
+    monkeypatch.setattr(nl_cli, "add_source", _no_id_add)
+    monkeypatch.setattr(nl_cli, "wait_source",
+                        lambda *a, **k: wait_called.append(True) or True)
+    monkeypatch.setattr(nl_cli, "ask", lambda *a, **k: "answer")
+    monkeypatch.setattr(nl_cli, "generate_artifact", lambda *a, **k: _TASK_ID)
+    monkeypatch.setattr(nl_cli, "wait_artifact", lambda *a, **k: True)
+    monkeypatch.setattr("notebooklm_orchestrator.cli.time.sleep", lambda s: None)
+
+    def _fake_download(nb_path, dl_type, dest, notebook_id, log_path):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("content", encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(nl_cli, "download_artifact", _fake_download)
+
+    rc = cmd_run(args)
+    assert rc == 0
+
+    manifest = json.loads((tmp_path / "outputs" / "test_run_id" / "run_manifest.json").read_text())
+    assert manifest["sources_add_ok"] == 2  # both counted as succeeded
+    assert manifest["status"] == "success"
+    # warning emitted for the no-id case
+    assert any(w["type"] == "source_add_no_id" for w in manifest["warnings"])
+    # wait_source called only once (for the source that had an id)
+    assert len(wait_called) == 1
+
+
+# ---------------------------------------------------------------------------
+# 13. notes/ created and ask_0.md written
+# ---------------------------------------------------------------------------
+
+def test_notes_dir_and_ask_file_written(tmp_path, monkeypatch):
+    """notes/ dir exists and ask_0.md is written with the prompt response."""
+    src_file = _fake_sources_json(tmp_path, n_included=1)
+    args = _args(tmp_path, sources=str(src_file), deliverables=["briefing"])
+
+    monkeypatch.setattr(nl_cli, "which_notebooklm", lambda: _NB_PATH)
+    monkeypatch.setattr(nl_cli, "auth_state_path",
+                        lambda: tmp_path / "storage_state.json")
+    (tmp_path / "storage_state.json").touch()
+    monkeypatch.setattr(nl_cli, "get_version", lambda *a: "0.3.3")
+    monkeypatch.setattr(nl_cli, "create_notebook", lambda *a, **k: _NB_ID)
+    monkeypatch.setattr(nl_cli, "use_notebook", lambda *a, **k: None)
+    monkeypatch.setattr(nl_cli, "add_source",
+                        lambda *a, **k: {"ok": True, "source_id": _SRC_ID, "error": None})
+    monkeypatch.setattr(nl_cli, "wait_source", lambda *a, **k: True)
+    monkeypatch.setattr(nl_cli, "ask", lambda *a, **k: "The answer text")
+    monkeypatch.setattr(nl_cli, "generate_artifact", lambda *a, **k: _TASK_ID)
+    monkeypatch.setattr(nl_cli, "wait_artifact", lambda *a, **k: True)
+    monkeypatch.setattr("notebooklm_orchestrator.cli.time.sleep", lambda s: None)
+
+    def _fake_download(nb_path, dl_type, dest, notebook_id, log_path):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("content", encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(nl_cli, "download_artifact", _fake_download)
+
+    rc = cmd_run(args)
+    assert rc == 0
+
+    run_dir = tmp_path / "outputs" / "test_run_id"
+    assert (run_dir / "notes").is_dir()
+    ask_file = run_dir / "notes" / "ask_0.md"
+    assert ask_file.exists()
+    assert ask_file.read_text() == "The answer text"
+
+    manifest = json.loads((run_dir / "run_manifest.json").read_text())
+    assert manifest["prompts_used"][0]["response_file"] == str(ask_file)

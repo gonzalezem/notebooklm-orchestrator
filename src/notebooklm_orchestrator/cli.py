@@ -7,6 +7,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -72,6 +73,16 @@ def _which(cmd: str) -> Optional[str]:
             return c
 
     return shutil.which(cmd)
+
+
+def _version_ok(version_str: str, minimum: str) -> bool:
+    """Return True if version_str >= minimum (x.y.z tuples). Unparseable -> True."""
+    try:
+        v = tuple(int(x) for x in version_str.strip().split("."))
+        m = tuple(int(x) for x in minimum.split("."))
+        return v >= m
+    except (ValueError, AttributeError):
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +265,7 @@ def cmd_run(args: argparse.Namespace) -> int:  # noqa: C901
         "sources_add_ok": 0,
         "sources_add_failed": 0,
         "sources_failed_urls": [],
+        "source_add_delay_seconds": 2,
         "prompts_used": [],
         "artifacts": [],
         "missing_artifacts": [],
@@ -291,7 +303,13 @@ def cmd_run(args: argparse.Namespace) -> int:  # noqa: C901
             _save_manifest("failed", failed_step="auth", error_summary=msg)
             return 5
 
-        mstate["notebooklm_version"] = nl_cli.get_version(nb_path, log_path)
+        version_str = nl_cli.get_version(nb_path, log_path)
+        mstate["notebooklm_version"] = version_str
+        if not _version_ok(version_str, "0.3.3"):
+            msg = f"notebooklm version {version_str!r} is below minimum required 0.3.3. Run: pip install -U notebooklm"
+            print(msg, file=sys.stderr)
+            _save_manifest("failed", failed_step="preflight", error_summary=msg)
+            return 4
     else:
         nb_path = None  # not used in dry-run
 
@@ -412,17 +430,25 @@ def cmd_run(args: argparse.Namespace) -> int:  # noqa: C901
     urls = urls[:nl_cli.NL_MAX_SOURCES]
     add_ok, add_failed, failed_urls = 0, 0, []
 
-    for url in urls:
+    for i, url in enumerate(urls):
         result = nl_cli.add_source(nb_path, url, notebook_id, log_path)
         if result["ok"]:
             add_ok += 1
-            # Wait for source to process before adding next
             if result["source_id"]:
-                nl_cli.wait_source(nb_path, result["source_id"], notebook_id, log_path)
+                ok_wait = nl_cli.wait_source(nb_path, result["source_id"], notebook_id, log_path)
+                if not ok_wait:
+                    _write_text(log_path, f"Source wait timed out for {url}\n")
+                    mstate["warnings"].append({"type": "source_wait_timeout", "url": url})
+            else:
+                _write_text(log_path, f"Source added but no source_id returned for {url}\n")
+                mstate["warnings"].append({"type": "source_add_no_id", "url": url})
         else:
             add_failed += 1
             failed_urls.append(url)
             _write_text(log_path, f"Source add failed for {url}: {result['error']}\n")
+        # Rate limiting: 2s delay between adds (not after the last one)
+        if i < len(urls) - 1:
+            time.sleep(2)
 
     mstate["sources_attempted"] = len(urls)
     mstate["sources_add_ok"] = add_ok
