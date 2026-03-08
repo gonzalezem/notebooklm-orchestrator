@@ -139,16 +139,19 @@ def _write_curation_report(
     # Section 1: Included sources
     lines.append(f"## Included sources ({len(included)})")
     lines.append("")
-    lines.append("| # | Title | Channel | Views | Duration | Published | URL | Notes |")
-    lines.append("|---|---|---|---|---|---|---|---|")
+    lines.append("| # | Title | Channel | Views | Duration | Published | Score | Factors | URL | Notes |")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|")
     for i, src in enumerate(included, 1):
         title = (src.get("title") or "-").replace("|", "\\|")
         channel = (src.get("channel") or "-").replace("|", "\\|")
         views = src.get("view_count", "-")
         duration = _fmt_duration(src.get("duration_seconds"))
         published = (src.get("published_at") or "-")[:10]
+        score = src.get("quality_score", "-")
+        factors_list = src.get("quality_factors") or []
+        factors_str = ", ".join(factors_list[:3]) if factors_list else "-"
         url = src.get("url", "-")
-        lines.append(f"| {i} | {title} | {channel} | {views} | {duration} | {published} | {url} |  |")
+        lines.append(f"| {i} | {title} | {channel} | {views} | {duration} | {published} | {score} | {factors_str} | {url} |  |")
     lines.append("")
 
     # Section 2: Excluded sources summary

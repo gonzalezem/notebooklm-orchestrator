@@ -176,6 +176,74 @@ def normalize_entry(raw: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Quality scoring
+# ---------------------------------------------------------------------------
+
+def score_source(entry: dict, *, today: date) -> tuple[int, list[str]]:
+    """Return (quality_score, quality_factors) for a normalized source dict.
+
+    today: reference date for recency (injected so tests can fix it).
+    Never raises; returns (0, []) when all fields are missing/unparseable.
+    """
+    factors: list[str] = []
+    views_score = 0
+    recency_score = 0
+    duration_score = 0
+
+    # Component 1: views (0-40)
+    vc = entry.get("view_count")
+    if vc is not None:
+        try:
+            vc = int(vc)
+            if vc >= 100_000:
+                views_score = 40
+                factors.append("high_views")
+            elif vc >= 10_000:
+                views_score = 20
+                factors.append("moderate_views")
+            elif vc >= 1_000:
+                views_score = 8
+        except (TypeError, ValueError):
+            pass
+
+    # Component 2: recency (0-40)
+    pub = entry.get("published_at")
+    if pub is not None:
+        try:
+            age_days = (today - date.fromisoformat(str(pub))).days
+            if age_days <= 30:
+                recency_score = 40
+                factors.append("very_recent")
+            elif age_days <= 90:
+                recency_score = 30
+                factors.append("recent")
+            elif age_days <= 180:
+                recency_score = 20
+            elif age_days <= 365:
+                recency_score = 10
+            elif age_days <= 730:
+                recency_score = 4
+        except (ValueError, TypeError, OverflowError):
+            pass
+
+    # Component 3: duration (0-20)
+    dur = entry.get("duration_seconds")
+    if dur is not None:
+        try:
+            dur = int(dur)
+            if 300 <= dur <= 2400:
+                duration_score = 20
+                factors.append("ideal_duration")
+            elif 120 <= dur < 300 or 2400 < dur <= 3600:
+                duration_score = 8
+        except (TypeError, ValueError):
+            pass
+
+    score = min(100, views_score + recency_score + duration_score)
+    return score, factors
+
+
+# ---------------------------------------------------------------------------
 # Filter value parsing
 # ---------------------------------------------------------------------------
 
@@ -317,10 +385,10 @@ def apply_filters(
                 item["included"] = False
                 item["exclusion_reason"] = "duplicate"
 
-    # 7. cap: keep top `selection_cap` included items by view_count (null sorts last)
+    # 7. cap: keep top `selection_cap` included items by quality_score desc, view_count desc
     included = [item for item in items if item["included"]]
     included.sort(
-        key=lambda x: x.get("view_count") if x.get("view_count") is not None else -1,
+        key=lambda x: (x.get("quality_score", 0), x.get("view_count") or 0),
         reverse=True,
     )
     keep_ids = {id(item) for item in included[:selection_cap]}
@@ -417,6 +485,11 @@ def curate_sources(
 
     candidate_count = len(entries)
     _append_log(log_path, f"Candidates fetched: {candidate_count}")
+
+    # Score all entries before filtering
+    today = date.today()
+    for entry in entries:
+        entry["quality_score"], entry["quality_factors"] = score_source(entry, today=today)
 
     # Apply filter pipeline
     filters = {
