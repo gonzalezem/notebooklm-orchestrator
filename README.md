@@ -96,6 +96,29 @@ nlm-orch run "claude code skills" --intent implementation --deliverables briefin
 
 If the pack directory is missing or empty and no `--prompts` files are provided, the run exits 2.
 
+## Golden path
+
+**1. Review sources before committing to NotebookLM:**
+```bash
+nlm-orch run "claude code notebooklm workflow" --review
+```
+Stops after curation. Writes `outputs/<run_id>/curation_report.md`. Edit `sources.json` as needed.
+
+**2. Run the full pipeline:**
+```bash
+nlm-orch run "claude code notebooklm workflow" \
+  --sources outputs/<run_id>/sources.json \
+  --deliverables slides infographic briefing \
+  --intent strategy
+```
+Downloads `deck.pdf`, `infographic.png`, `briefing.md`, and writes `deliverables_handoff.md`.
+
+**3. Use the handoff:**
+```bash
+open outputs/<run_id>/deliverables_handoff.md
+```
+Step-by-step instructions for importing into Canva or Google Slides, plus a post-editing checklist.
+
 ## Outputs contract
 
 Each run writes to `outputs/<run_id>/`:
