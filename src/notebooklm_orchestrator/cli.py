@@ -194,6 +194,128 @@ def _write_curation_report(
 
 
 # ---------------------------------------------------------------------------
+# Handoff guide helper
+# ---------------------------------------------------------------------------
+
+_ARTIFACT_FILENAMES: dict[str, str] = {
+    "slides": "deck.pdf",
+    "infographic": "infographic.png",
+    "briefing": "briefing.md",
+}
+
+
+def _write_handoff(
+    handoff_path: Path,
+    deliverables: list[str],
+    artifacts_result: list[dict],
+    query: str,
+    run_id: str,
+    run_dir: Path,
+) -> None:
+    """Write deliverables_handoff.md. Called only when trigger condition is met."""
+    artifact_by_kw: dict[str, dict] = {a["keyword"]: a for a in artifacts_result}
+
+    deck_downloaded = artifact_by_kw.get("slides", {}).get("status") == "downloaded"
+    infographic_downloaded = artifact_by_kw.get("infographic", {}).get("status") == "downloaded"
+
+    lines: list[str] = []
+
+    # Intro paragraph
+    lines.append(
+        "Your deliverables are ready. Use the steps below to make them editable, "
+        "apply your branding, and export in the format your audience needs."
+    )
+    lines.append("")
+
+    # Section 1: Generated deliverables
+    lines.append("## Generated deliverables")
+    lines.append("")
+    for kw in deliverables:
+        art = artifact_by_kw.get(kw, {})
+        filename = art.get("filename") or _ARTIFACT_FILENAMES.get(kw, kw)
+        if art.get("status") == "downloaded":
+            path_str = art.get("path") or str(run_dir / "artifacts" / filename)
+            lines.append(f"- **{kw}** - `{path_str}` (downloaded)")
+        else:
+            lines.append(f"- **{kw}** - `-` (not downloaded)")
+    lines.append("")
+
+    # Section 2: Make editable in Canva
+    lines.append("## Make editable in Canva")
+    lines.append("")
+    if deck_downloaded:
+        lines.append("### Slide deck (deck.pdf)")
+        lines.append("")
+        lines.append("1. Go to canva.com and click **Create a design**.")
+        lines.append("2. Choose **Import** and upload `artifacts/deck.pdf`.")
+        lines.append("3. Canva will convert each page to an editable slide. Review layout fidelity.")
+        lines.append("4. Apply your brand colors and fonts using **Brand Kit** (Canva Pro) or manually per slide.")
+        lines.append("5. Replace placeholder images if any were inserted by NotebookLM.")
+        lines.append("6. Export as **PowerPoint (.pptx)** or **PDF** when done.")
+        lines.append("")
+    if infographic_downloaded:
+        lines.append("### Infographic (infographic.png)")
+        lines.append("")
+        lines.append("1. Go to canva.com and click **Create a design -> Custom size**.")
+        lines.append("2. Import the PNG as a background image using **Uploads -> Upload files**.")
+        lines.append("3. Overlay editable text boxes and shapes on top to make content modifiable.")
+        lines.append("4. Alternatively, use **Edit photo -> Background Remover** to isolate elements (Canva Pro).")
+        lines.append("5. Export as PNG (for web) or PDF (for print).")
+        lines.append("")
+
+    # Section 3: Make editable in Google Slides
+    lines.append("## Make editable in Google Slides")
+    lines.append("")
+    if deck_downloaded:
+        lines.append("### Slide deck (deck.pdf)")
+        lines.append("")
+        lines.append("1. Open Google Drive (drive.google.com) and click **New -> File upload**.")
+        lines.append("2. Upload `artifacts/deck.pdf`.")
+        lines.append("3. Right-click the uploaded PDF and choose **Open with -> Google Slides**.")
+        lines.append("4. Google will convert the PDF to an editable presentation. Text and layout fidelity varies.")
+        lines.append("5. Apply theme colors via **Slide -> Edit theme**.")
+        lines.append("6. Download as **PowerPoint (.pptx)** or share directly from Drive.")
+        lines.append("")
+    if infographic_downloaded:
+        lines.append("### Infographic (infographic.png)")
+        lines.append("")
+        lines.append("1. Open Google Drive (drive.google.com) and click **New -> File upload**.")
+        lines.append("2. Upload `artifacts/infographic.png`.")
+        lines.append("3. Open Google Slides and create a new blank presentation.")
+        lines.append("4. Insert the PNG via **Insert -> Image -> Upload from computer**.")
+        lines.append("5. Resize to fill the slide. Overlay text boxes and shapes as needed.")
+        lines.append("6. Export via **File -> Download -> PNG image** or share directly from Drive.")
+        lines.append("")
+
+    # Section 4: Post-editing checklist
+    lines.append("## Post-editing checklist")
+    lines.append("")
+    lines.append("- [ ] Apply brand colors and fonts to all slides/graphics.")
+    lines.append("- [ ] Verify citations: each claim should trace back to a source in `sources.json`.")
+    lines.append("- [ ] Review slide order and narrative flow against the original query.")
+    lines.append("- [ ] Remove or replace any NotebookLM watermarks or boilerplate footers, if permitted by your licence.")
+    lines.append("- [ ] Check image resolution before print export (infographic.png should be 300 DPI minimum for print).")
+    lines.append("- [ ] Export in the required format (pptx, pdf, png, svg) for your audience.")
+    lines.append(f"- [ ] Archive this run folder (`outputs/{run_id}/`) for reproducibility.")
+    lines.append("")
+
+    # Section 5: Provenance
+    lines.append("## Provenance")
+    lines.append("")
+    lines.append(f"- **Run ID:** `{run_id}`")
+    lines.append(f"- **Query:** `{query}`")
+    lines.append(f"- **Manifest:** `outputs/{run_id}/run_manifest.json`")
+    lines.append(f"- **Sources:** `outputs/{run_id}/sources.json`")
+    lines.append("")
+    lines.append(
+        "The manifest records all filters, prompt files used, "
+        "NotebookLM notebook ID, and artifact download statuses."
+    )
+
+    handoff_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
 # Subcommand handlers
 # ---------------------------------------------------------------------------
 
@@ -388,6 +510,7 @@ def cmd_run(args: argparse.Namespace) -> int:  # noqa: C901
         "prompts_used": [],
         "artifacts": [],
         "missing_artifacts": [],
+        "handoff_path": None,
         "warnings": [],
         "outputs": {
             "raw_jsonl": str(raw_path),
@@ -702,6 +825,31 @@ def cmd_run(args: argparse.Namespace) -> int:  # noqa: C901
 
     mstate["artifacts"] = artifacts_result
     mstate["missing_artifacts"] = missing_artifacts
+
+    # ------------------------------------------------------------------
+    # 10a. Write deliverables_handoff.md (conditional, non-fatal)
+    # ------------------------------------------------------------------
+    _VISUAL_KWS = ("slides", "infographic")
+    _has_visual_kw = any(kw in args.deliverables for kw in _VISUAL_KWS)
+    _has_visual_download = any(
+        a["status"] == "downloaded"
+        for a in artifacts_result
+        if a["keyword"] in _VISUAL_KWS
+    )
+    if _has_visual_kw and _has_visual_download:
+        _handoff_path = run_dir / "deliverables_handoff.md"
+        try:
+            _write_handoff(
+                _handoff_path,
+                args.deliverables,
+                artifacts_result,
+                args.query or "",
+                run_id,
+                run_dir,
+            )
+            mstate["handoff_path"] = str(_handoff_path.resolve())
+        except Exception as exc:
+            _write_text(log_path, f"Warning: deliverables_handoff.md write failed: {exc}\n")
 
     # ------------------------------------------------------------------
     # 11. Write final manifest
