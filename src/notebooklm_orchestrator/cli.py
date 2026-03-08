@@ -105,6 +105,92 @@ def _version_ok(version_str: str, minimum: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Curation report helpers
+# ---------------------------------------------------------------------------
+
+_EXCLUSION_REASON_ORDER = [
+    "channel_allow", "channel_block", "recency", "max_duration",
+    "min_views", "duplicate", "cap",
+]
+
+
+def _fmt_duration(seconds) -> str:
+    """Format duration_seconds as 'Xm Ys'."""
+    try:
+        s = int(seconds)
+    except (TypeError, ValueError):
+        return "-"
+    m, s = divmod(s, 60)
+    return f"{m}m {s:02d}s"
+
+
+def _write_curation_report(
+    report_path: Path,
+    all_sources: list[dict],
+    query: str,
+    deliverables: list[str],
+) -> None:
+    """Write curation_report.md: included table, excluded summary, rerun instructions."""
+    included = [s for s in all_sources if s.get("included", True)]
+    excluded = [s for s in all_sources if not s.get("included", True)]
+
+    lines: list[str] = []
+
+    # Section 1: Included sources
+    lines.append(f"## Included sources ({len(included)})")
+    lines.append("")
+    lines.append("| # | Title | Channel | Views | Duration | Published | URL | Notes |")
+    lines.append("|---|---|---|---|---|---|---|---|")
+    for i, src in enumerate(included, 1):
+        title = (src.get("title") or "-").replace("|", "\\|")
+        channel = (src.get("channel") or "-").replace("|", "\\|")
+        views = src.get("view_count", "-")
+        duration = _fmt_duration(src.get("duration_seconds"))
+        published = (src.get("published_at") or "-")[:10]
+        url = src.get("url", "-")
+        lines.append(f"| {i} | {title} | {channel} | {views} | {duration} | {published} | {url} |  |")
+    lines.append("")
+
+    # Section 2: Excluded sources summary
+    reason_counts: dict[str, int] = {}
+    for s in excluded:
+        reason = s.get("exclusion_reason") or "unknown"
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
+
+    lines.append(f"## Excluded sources ({len(excluded)})")
+    lines.append("")
+    lines.append("| Exclusion reason | Count |")
+    lines.append("|---|---|")
+    for reason in _EXCLUSION_REASON_ORDER:
+        if reason in reason_counts:
+            lines.append(f"| {reason} | {reason_counts[reason]} |")
+    for reason in sorted(reason_counts):
+        if reason not in _EXCLUSION_REASON_ORDER:
+            lines.append(f"| {reason} | {reason_counts[reason]} |")
+    lines.append("")
+
+    # Section 3: How to edit and rerun
+    sources_path_str = str(report_path.parent / "sources.json")
+    deliverables_str = " ".join(deliverables)
+    lines.append("## How to edit sources.json and rerun")
+    lines.append("")
+    lines.append("To edit the curated source set before running the full pipeline:")
+    lines.append("")
+    lines.append("1. Open the `sources.json` file in the run directory.")
+    lines.append('2. To remove an included source: set `"included": false` on that entry.')
+    lines.append('3. To reinstate an excluded source: set `"included": true` and set `"exclusion_reason": null`.')
+    lines.append("4. Rerun with:")
+    lines.append("")
+    lines.append("   ```")
+    lines.append(f'   nlm-orch run "{query}" --sources {sources_path_str} --deliverables {deliverables_str}')
+    lines.append("   ```")
+    lines.append("")
+    lines.append("   Omit `--review` on the rerun to proceed to NotebookLM.")
+
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
 # Subcommand handlers
 # ---------------------------------------------------------------------------
 
@@ -224,6 +310,9 @@ def cmd_run(args: argparse.Namespace) -> int:  # noqa: C901
     from . import notebooklm_cli as nl_cli
     from .sources import curate_sources, SELECTION_CAP
 
+    # --review wins over --dry-run silently
+    in_review = getattr(args, "review", False)
+
     # ------------------------------------------------------------------
     # 1. Input validation
     # ------------------------------------------------------------------
@@ -313,9 +402,9 @@ def cmd_run(args: argparse.Namespace) -> int:  # noqa: C901
         manifest_path.write_text(json.dumps(mstate, indent=2), encoding="utf-8")
 
     # ------------------------------------------------------------------
-    # 3. notebooklm preflight (skip for dry-run: no NLM calls will happen)
+    # 3. notebooklm preflight (skip for dry-run and review: no NLM calls)
     # ------------------------------------------------------------------
-    if not args.dry_run:
+    if not args.dry_run and not in_review:
         nb_path = nl_cli.which_notebooklm()
         if nb_path is None:
             msg = "notebooklm CLI not found. Install notebooklm-py in this venv."
@@ -338,7 +427,7 @@ def cmd_run(args: argparse.Namespace) -> int:  # noqa: C901
             _save_manifest("failed", failed_step="preflight", error_summary=msg)
             return 4
     else:
-        nb_path = None  # not used in dry-run
+        nb_path = None  # not used in dry-run or review
 
     # ------------------------------------------------------------------
     # 4. Source acquisition
@@ -403,9 +492,31 @@ def cmd_run(args: argparse.Namespace) -> int:  # noqa: C901
     # ------------------------------------------------------------------
     # 5. Dry-run exit: sources done, no NLM calls
     # ------------------------------------------------------------------
-    if args.dry_run:
+    if args.dry_run and not in_review:
         _save_manifest("dry-run")
         print(str(run_dir))
+        return 0
+
+    # ------------------------------------------------------------------
+    # 5a. Review exit: write curation_report.md, no NLM calls
+    # ------------------------------------------------------------------
+    if in_review:
+        report_path = run_dir / "curation_report.md"
+        _write_curation_report(
+            report_path,
+            _load_all_sources(sources_path),
+            args.query or "",
+            args.deliverables,
+        )
+        mstate["review_report_path"] = str(report_path.resolve())
+        _save_manifest("review")
+        total = mstate["candidate_count"]
+        print(
+            f"DONE: {run_dir} "
+            f"[status=review "
+            f"sources={mstate['included_count']}/{total} "
+            f"report=curation_report.md]"
+        )
         return 0
 
     # ------------------------------------------------------------------
@@ -731,6 +842,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--intent", default="strategy",
         choices=["strategy", "implementation", "deliverables"],
         help="Prompt pack to use (default: strategy)",
+    )
+    sp.add_argument(
+        "--review", action="store_true",
+        help="Stop after curation and write curation_report.md. No NotebookLM calls. Wins over --dry-run.",
     )
     sp.add_argument(
         "--dry-run", action="store_true",
