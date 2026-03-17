@@ -35,7 +35,7 @@ def get_ytdlp_version(ytdlp_path: str) -> str:
 
 
 def _build_cmd(ytdlp_path: str, query: str, max_results: int, flat_playlist: bool) -> list[str]:
-    cmd = [ytdlp_path, "--dump-json"]
+    cmd = [ytdlp_path, "--dump-json", "--ignore-errors"]
     if flat_playlist:
         cmd.append("--flat-playlist")
     cmd.append(f"ytsearch{max_results}:{query}")
@@ -109,12 +109,21 @@ def _run_ytdlp(
         if r.stderr:
             _append_log(log_path, r.stderr.rstrip())
 
+        lines = [l for l in r.stdout.splitlines() if l.strip()]
+
         if r.returncode == 0:
-            lines = [l for l in r.stdout.splitlines() if l.strip()]
             raw_path.write_text(r.stdout, encoding="utf-8")
             return 0, lines
 
         _append_log(log_path, f"yt-dlp exited {r.returncode} (attempt {attempt + 1}/2).")
+
+        # Partial success: some videos fetched despite errors (e.g. age-restricted
+        # videos skipped via --ignore-errors). Use what we got.
+        if lines:
+            raw_path.write_text(r.stdout, encoding="utf-8")
+            _append_log(log_path, f"yt-dlp partial success: {len(lines)} results recovered.")
+            return 0, lines
+
         if attempt == 0:
             time.sleep(3)
 
