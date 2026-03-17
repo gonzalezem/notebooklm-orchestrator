@@ -36,6 +36,8 @@ cd notebooklm-orchestrator
 
 ### Step 3 — Create the virtual environment (run once per machine)
 
+A virtual environment is an isolated folder (`.venv/`) that holds this project's Python and packages separately from the rest of your machine. This prevents version conflicts with other Python projects. When you activate it, `nlm-orch` becomes available. When you open a new terminal, you need to activate it again.
+
 ```bash
 /opt/homebrew/bin/python3.11 -m venv .venv
 source .venv/bin/activate
