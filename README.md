@@ -1,36 +1,41 @@
 # NotebookLM Orchestrator
 
-CLI-first research and deliverables pipeline.
+CLI pipeline that curates YouTube and web sources, pushes them into Google NotebookLM, and downloads deliverables (slide deck, infographic, briefing).
 
-## CLI
+---
 
-The main entrypoint is `nlm-orch`.
+## New here? Start with this section
 
-It:
-1. Searches and curates sources (YouTube via `yt-dlp`, plus direct URLs and optional local files)
-2. Pushes curated sources into Google NotebookLM
-3. Asks analysis questions using prompt templates
-4. Generates deliverables (slide deck, infographic, briefing)
-5. Downloads artifacts to `outputs/<run_id>/` with an auditable `run_manifest.json`
+### Step 1 — Prerequisites (install once)
 
-Every run writes a manifest containing filters, the exact source list, prompts used, NotebookLM notebook id, and artifact filenames.
+- Python 3.11 via Homebrew:
+  ```bash
+  brew install python@3.11
+  ```
+- yt-dlp:
+  ```bash
+  brew install yt-dlp
+  ```
+- A Google account with NotebookLM access at [notebooklm.google.com](https://notebooklm.google.com)
 
-## Key constraints
+> **Do not use `/usr/bin/python3`** — macOS ships Python 3.9 which will cause version errors.
 
-- NotebookLM has a 50-source cap per notebook, so curation matters.
-- NotebookLM automation uses an unofficial client. It can break if Google changes internals.
-- By default, only public URLs are uploaded. Local file upload is opt-in.
+---
 
-## Install (macOS)
+### Step 2 — Get the repo
 
-**Prerequisites:**
-- Python 3.11 via Homebrew (`brew install python@3.11`)
-- `yt-dlp` (`brew install yt-dlp`)
-- Google account with NotebookLM access
+Open a terminal, then:
 
-**Do not use `/usr/bin/python3`** (macOS system Python is 3.9 and will cause version errors).
+```bash
+cd ~/Desktop                  # or wherever you keep projects
+git clone https://github.com/gonzalezem/notebooklm-orchestrator.git
+cd notebooklm-orchestrator
+```
 
-**Create the virtual environment:**
+---
+
+### Step 3 — Create the virtual environment (run once per machine)
+
 ```bash
 /opt/homebrew/bin/python3.11 -m venv .venv
 source .venv/bin/activate
@@ -38,73 +43,68 @@ python -m pip install -U pip
 python -m pip install -e ".[dev]"
 ```
 
-## Verification
+Your prompt will change to show `(.venv)` when the environment is active.
+
+---
+
+### Step 4 — Verify the install
 
 ```bash
 nlm-orch --help
 nlm-orch doctor
 ```
 
-`nlm-orch doctor` checks that `yt-dlp` and the `notebooklm` CLI are reachable and that auth state exists at `~/.notebooklm/storage_state.json`. Exits 0 only when all three pass. It also enforces notebooklm CLI version >= 0.3.3 (fails fast if older).
+`doctor` checks that `yt-dlp` and the `notebooklm` CLI are reachable and that auth state exists. If it passes, you are ready.
 
-## NotebookLM auth
+---
 
-Log in once before running pipelines:
+### Step 5 — Log in to NotebookLM (run once)
 
 ```bash
 nlm-orch login
 ```
 
-This opens a browser, completes Google OAuth, and writes auth state to:
+This opens a browser, completes Google OAuth, and writes auth state to `~/.notebooklm/`. You only need to do this once (until the session expires).
 
-- `~/.notebooklm/storage_state.json` - session cookies
-- `~/.notebooklm/browser_profile/` - browser profile
+---
 
-**Do not copy these into the repo.** They live outside the repo under `~/.notebooklm/` and are not meant to be committed.
+## Every time you open a new terminal
 
-## Implementation status
+**You must activate the virtual environment before using `nlm-orch`:**
 
-| Subcommand | Status |
-|---|---|
-| `nlm-orch doctor` | Implemented |
-| `nlm-orch login` | Implemented |
-| `nlm-orch sources "<query>"` | Implemented (real yt-dlp curation, filtering, provenance) |
-| `nlm-orch run "<query>"` | Implemented. Supports `--dry-run`; generates deliverables via NotebookLM; records warnings for non-fatal failures (e.g., some sources fail to add). |
+```bash
+cd /path/to/notebooklm-orchestrator
+source .venv/bin/activate
+```
+
+If you skip this, you will see `zsh: command not found: nlm-orch`.
+
+---
 
 ## Quickstart
 
 ```bash
+# Curate sources only (no NotebookLM)
 nlm-orch sources "claude code skills"
+
+# Dry run (curate + create notebook, no deliverables)
 nlm-orch run "claude code skills" --dry-run
+
+# Full run, briefing only
 nlm-orch run "claude code skills" --deliverables briefing
 ```
 
-## Prompt packs and `--intent`
+---
 
-Each `nlm-orch run` loads a prompt pack from `prompts/packs/<intent>/` before any `--prompts` files. Prompts are sent to NotebookLM in lexical order within the pack, then user-supplied files.
+## Golden path (recommended workflow)
 
-| Intent | Pack directory | Use when |
-|---|---|---|
-| `strategy` (default) | `prompts/packs/strategy/` | Landscape overview, risks, practices |
-| `implementation` | `prompts/packs/implementation/` | Architecture decisions, checklists |
-| `deliverables` | `prompts/packs/deliverables/` | Deck narrative, infographic spec |
-
-Example:
-```bash
-nlm-orch run "claude code skills" --intent implementation --deliverables briefing
-```
-
-If the pack directory is missing or empty and no `--prompts` files are provided, the run exits 2.
-
-## Golden path
-
-**1. Review sources before committing to NotebookLM:**
+**1. Review sources before sending to NotebookLM:**
 ```bash
 nlm-orch run "claude code notebooklm workflow" --review
 ```
-Stops after curation. Writes `outputs/<run_id>/curation_report.md`. Edit `sources.json` as needed.
+Stops after curation. Writes `outputs/<run_id>/curation_report.md`. Edit `sources.json` if needed.
 
-**2. Run the full pipeline:**
+**2. Run the full pipeline with reviewed sources:**
 ```bash
 nlm-orch run "claude code notebooklm workflow" \
   --sources outputs/<run_id>/sources.json \
@@ -113,17 +113,44 @@ nlm-orch run "claude code notebooklm workflow" \
 ```
 Downloads `deck.pdf`, `infographic.png`, `briefing.md`, and writes `deliverables_handoff.md`.
 
-**3. Use the handoff:**
+**3. Open the handoff doc:**
 ```bash
 open outputs/<run_id>/deliverables_handoff.md
 ```
-Step-by-step instructions for importing into Canva or Google Slides, plus a post-editing checklist.
+Step-by-step instructions for importing into Canva or Google Slides.
 
-## Outputs contract
+---
+
+## Subcommand reference
+
+| Subcommand | What it does |
+|---|---|
+| `nlm-orch doctor` | Checks dependencies and auth state |
+| `nlm-orch login` | Opens browser for Google OAuth |
+| `nlm-orch sources "<query>"` | Curates sources via yt-dlp, no NotebookLM |
+| `nlm-orch run "<query>"` | Full pipeline: curate, push to NLM, generate deliverables |
+
+---
+
+## Prompt packs and `--intent`
+
+Each run loads a prompt pack from `prompts/packs/<intent>/` before any `--prompts` files.
+
+| Intent | Use when |
+|---|---|
+| `strategy` (default) | Landscape overview, risks, practices |
+| `implementation` | Architecture decisions, checklists |
+| `deliverables` | Deck narrative, infographic spec |
+
+```bash
+nlm-orch run "claude code skills" --intent implementation --deliverables briefing
+```
+
+---
+
+## Outputs
 
 Each run writes to `outputs/<run_id>/`:
-
-Note: `artifacts/` is created even in `--dry-run` (empty). `notes/` is created when prompts are asked; ask responses are saved as `ask_N.md`.
 
 ```
 outputs/<run_id>/
@@ -140,4 +167,12 @@ outputs/<run_id>/
     ask_1.md
 ```
 
-The tracked template for this structure lives at `docs/outputs_template/`.
+`artifacts/` is created even in `--dry-run` (empty). The tracked template lives at `docs/outputs_template/`.
+
+---
+
+## Key constraints
+
+- NotebookLM has a 50-source cap per notebook. Curation filters matter.
+- NotebookLM automation uses an unofficial client. It can break if Google changes internals.
+- Auth state (`~/.notebooklm/`) lives outside the repo. Do not commit it.
