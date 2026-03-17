@@ -44,6 +44,8 @@ source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -e ".[dev]"
 pip install notebooklm-py
+pip install playwright
+playwright install chromium
 ```
 
 Your prompt will change to show `(.venv)` when the environment is active.
