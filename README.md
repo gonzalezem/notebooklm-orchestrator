@@ -12,9 +12,9 @@ CLI pipeline that curates YouTube and web sources, pushes them into Google Noteb
   ```bash
   brew install python@3.11
   ```
-- yt-dlp:
+- yt-dlp and ffmpeg:
   ```bash
-  brew install yt-dlp
+  brew install yt-dlp ffmpeg
   ```
 - A Google account with NotebookLM access at [notebooklm.google.com](https://notebooklm.google.com)
 
