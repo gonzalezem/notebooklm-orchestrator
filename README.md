@@ -84,6 +84,15 @@ source .venv/bin/activate
 
 If you skip this, you will see `zsh: command not found: nlm-orch`.
 
+Do not prefix commands with `bash`:
+```bash
+# Wrong — bash tries to execute the Python entry point as a shell script
+bash nlm-orch run "my topic"
+
+# Correct
+nlm-orch run "my topic"
+```
+
 ---
 
 ## Quickstart
